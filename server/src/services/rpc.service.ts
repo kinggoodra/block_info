@@ -4,7 +4,7 @@ import redis from "../utils/redis";
 
 export type NetworkType = "mainnet" | "testnet";
 
-const SESSION_TTL_SECONDS = 24 * 60 * 60;
+export const SESSION_TTL_SECONDS = 24 * 60 * 60;
 
 export class RpcConfigurationError extends Error {
   constructor(message: string) {
@@ -40,7 +40,11 @@ export async function cacheRpcUrls(
 
   const redisKey = `rpc:${sessionId}:${networkType}`;
 
-  // Store only RPC URL strings; expire this network cache after 24 hours.
+  // Keep a shared session marker so both networks use the same browser session.
+  await redis.set(`session:${sessionId}`, "active", {
+    EX: SESSION_TTL_SECONDS,
+  });
+
   await redis.set(redisKey, JSON.stringify(rpcUrls), {
     EX: SESSION_TTL_SECONDS,
   });
