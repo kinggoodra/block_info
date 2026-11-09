@@ -1,50 +1,11 @@
 import { Request, Response } from "express";
-import { randomUUID } from "crypto";
-import redis from "../utils/redis";
 import {
   cacheRpcUrls,
   NetworkType,
   RpcConfigurationError,
   SESSION_TTL_SECONDS,
 } from "../services/rpc.service";
-
-const SESSION_ID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function getCookieValue(req: Request, name: string): string | undefined {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return undefined;
-
-  for (const cookie of cookieHeader.split(";")) {
-    const separatorIndex = cookie.indexOf("=");
-    if (separatorIndex < 0) continue;
-
-    const cookieName = cookie.slice(0, separatorIndex).trim();
-    if (cookieName !== name) continue;
-
-    try {
-      return decodeURIComponent(cookie.slice(separatorIndex + 1).trim());
-    } catch {
-      return undefined;
-    }
-  }
-
-  return undefined;
-}
-
-async function getOrCreateSessionId(req: Request): Promise<string> {
-  const existingSessionId = getCookieValue(req, "sessionId");
-
-  if (
-    existingSessionId &&
-    SESSION_ID_REGEX.test(existingSessionId) &&
-    (await redis.exists(`session:${existingSessionId}`))
-  ) {
-    return existingSessionId;
-  }
-
-  return randomUUID();
-}
+import { getOrCreateSessionId } from "../utils/session";
 
 export async function getMainnetRpc(
   req: Request,
