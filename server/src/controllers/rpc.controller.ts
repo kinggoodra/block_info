@@ -1,38 +1,49 @@
 import { Request, Response } from "express";
 import { randomUUID } from "crypto";
+import redis from "../utils/redis";
 import {
   cacheRpcUrls,
   NetworkType,
   RpcConfigurationError,
+  SESSION_TTL_SECONDS,
 } from "../services/rpc.service";
 
 const SESSION_ID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function validateChainIds(value: unknown): value is number[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(
-      (id) => Number.isSafeInteger(id) && (id as number) > 0
-    )
-  );
+function getCookieValue(req: Request, name: string): string | undefined {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return undefined;
+
+  for (const cookie of cookieHeader.split(";")) {
+    const separatorIndex = cookie.indexOf("=");
+    if (separatorIndex < 0) continue;
+
+    const cookieName = cookie.slice(0, separatorIndex).trim();
+    if (cookieName !== name) continue;
+
+    try {
+      return decodeURIComponent(cookie.slice(separatorIndex + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
 }
 
-function getOrCreateSessionId(
-  req: Request
-): { sessionId?: string; error?: string } {
-  const existingSessionId = req.get("X-Session-ID");
+async function getOrCreateSessionId(req: Request): Promise<string> {
+  const existingSessionId = getCookieValue(req, "sessionId");
 
-  if (!existingSessionId) {
-    return { sessionId: randomUUID() };
+  if (
+    existingSessionId &&
+    SESSION_ID_REGEX.test(existingSessionId) &&
+    (await redis.exists(`session:${existingSessionId}`))
+  ) {
+    return existingSessionId;
   }
 
-  if (!SESSION_ID_REGEX.test(existingSessionId)) {
-    return { error: "Invalid X-Session-ID" };
-  }
-
-  return { sessionId: existingSessionId };
+  return randomUUID();
 }
 
 export async function getMainnetRpc(
@@ -56,7 +67,13 @@ async function handleRpcRequest(
 ): Promise<void> {
   const chainIds: unknown = req.body?.chain_ids;
 
-  if (!validateChainIds(chainIds)) {
+  if (
+    !Array.isArray(chainIds) ||
+    chainIds.length === 0 ||
+    !chainIds.every(
+      (id) => Number.isSafeInteger(id) && (id as number) > 0
+    )
+  ) {
     res.status(400).json({
       success: false,
       message: "chain_ids must be a non-empty array of positive integers",
@@ -64,26 +81,24 @@ async function handleRpcRequest(
     return;
   }
 
-  const sessionResult = getOrCreateSessionId(req);
-
-  if (!sessionResult.sessionId || sessionResult.error) {
-    res.status(400).json({
-      success: false,
-      message: sessionResult.error,
-    });
-    return;
-  }
-
   try {
+    const sessionId = await getOrCreateSessionId(req);
     const data = await cacheRpcUrls(
-      sessionResult.sessionId,
+      sessionId,
       networkType,
-      chainIds
+      chainIds as number[]
     );
+
+    res.cookie("sessionId", sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_TTL_SECONDS * 1000,
+    });
 
     res.status(200).json({
       success: true,
-      session_id: sessionResult.sessionId,
       data,
     });
   } catch (error) {
