@@ -1,10 +1,17 @@
 import M_NETWORKS from "../config/mainnet";
 import T_NETWORKS from "../config/testnet";
+import { getAlchemyKeys } from "../config/alchemyKeys";
 import redis from "../utils/redis";
 
 export type NetworkType = "mainnet" | "testnet";
 
 export const SESSION_TTL_SECONDS = 24 * 60 * 60;
+const COUNTER_KEY = "alchemy:rpc-selection:round-robin";
+
+export interface RpcNetworkConfig {
+  chainId: number;
+  rpcUrl: string;
+}
 
 export class RpcConfigurationError extends Error {
   constructor(message: string) {
@@ -23,31 +30,49 @@ export async function cacheRpcUrls(
   }
 
   const networks = networkType === "mainnet" ? M_NETWORKS : T_NETWORKS;
-
-  // Resolve every requested chain before writing, so invalid input cannot
-  // replace a previously valid cache entry with partial data.
-  const rpcUrls = chainIds.map((chainId) => {
+  const selectedNetworks = chainIds.map((chainId) => {
     const network = networks[chainId];
-
-    if (!network || !network.rpc) {
+    if (!network?.rpc) {
       throw new RpcConfigurationError(
-        "Unsupported " + networkType + " chain ID: " + chainId
+        `Unsupported ${networkType} chain ID: ${chainId}`
       );
     }
-
-    return network.rpc;
+    return { chainId, rpcPrefix: network.rpc };
   });
 
-  const redisKey = `rpc:${sessionId}:${networkType}`;
+  const apiKeys = getAlchemyKeys();
+  if (apiKeys.length === 0) {
+    throw new Error("No Alchemy API keys configured");
+  }
 
-  // Keep a shared session marker so both networks use the same browser session.
+  // One atomic Redis counter distributes keys across both network routes.
+  const lastPosition = await redis.incrBy(
+    COUNTER_KEY,
+    selectedNetworks.length
+  );
+  const firstPosition = lastPosition - selectedNetworks.length + 1;
+
+  const rpcConfigs: RpcNetworkConfig[] = selectedNetworks.map(
+    (network, index) => {
+      const keyIndex =
+        ((firstPosition + index - 1) % apiKeys.length + apiKeys.length) %
+        apiKeys.length;
+      return {
+        chainId: network.chainId,
+        rpcUrl: `${network.rpcPrefix}${apiKeys[keyIndex]}`,
+      };
+    }
+  );
+
   await redis.set(`session:${sessionId}`, "active", {
     EX: SESSION_TTL_SECONDS,
   });
+  await redis.set(
+    `rpc:${sessionId}:${networkType}`,
+    JSON.stringify(rpcConfigs),
+    { EX: SESSION_TTL_SECONDS }
+  );
 
-  await redis.set(redisKey, JSON.stringify(rpcUrls), {
-    EX: SESSION_TTL_SECONDS,
-  });
-
-  return rpcUrls;
+  // Keep the existing API response contract (RPC prefixes only).
+  return selectedNetworks.map(({ rpcPrefix }) => rpcPrefix);
 }
