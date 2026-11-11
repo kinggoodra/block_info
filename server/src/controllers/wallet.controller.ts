@@ -27,27 +27,28 @@ export async function tokenBalancesController(
     }
 
     const result = await getWalletTokenBalances(publicAddress, sessionId);
-    const successfulNetworks = result.networks.filter(
-      (network) => network.status === "success"
-    ).length;
-    const failedNetworks = result.networks.length - successfulNetworks;
 
-    if (successfulNetworks === 0) {
+    if (result.successfulNetworks === 0) {
       res.status(502).json({
         success: false,
+        partial: false,
         message: "All selected networks failed",
-        data: result,
+        data: {
+          walletAddress: publicAddress,
+          mainnet: result.mainnet,
+          testnet: result.testnet,
+        },
       });
       return;
     }
 
     res.status(200).json({
       success: true,
-      partial: failedNetworks > 0,
+      partial: result.failedNetworks > 0,
       data: {
         walletAddress: publicAddress,
-        tokens: result.tokens,
-        networks: result.networks,
+        mainnet: result.mainnet,
+        testnet: result.testnet,
       },
     });
   } catch (error) {
