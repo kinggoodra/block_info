@@ -29,6 +29,12 @@ interface NetworkResult {
   error?: string;
 }
 
+interface NetworkGroupResult {
+  tokens: WalletTokenBalance[];
+  failedNetworks: number;
+  successfulNetworks: number;
+}
+
 async function getNetworkTokens(
   walletAddress: string,
   network: RpcNetworkConfig
@@ -125,44 +131,62 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function getWalletTokenBalances(
+async function getNetworkGroupTokens(
   walletAddress: string,
-  sessionId: string
-): Promise<{ tokens: WalletTokenBalance[]; networks: NetworkResult[] }> {
-  const configuration = await getSessionRpcNetworksByType(sessionId);
-  const selectedNetworks = [
-    ...configuration.mainnet,
-    ...configuration.testnet,
-  ];
-
-  if (selectedNetworks.length === 0) {
-    throw new Error("No networks selected");
-  }
-
+  networks: RpcNetworkConfig[]
+): Promise<NetworkGroupResult> {
   const results = await mapWithConcurrency(
-    selectedNetworks,
+    networks,
     MAX_NETWORK_CONCURRENCY,
     (network) => getNetworkTokens(walletAddress, network)
   );
 
   const tokens: WalletTokenBalance[] = [];
-  const networks: NetworkResult[] = results.map((result, index) => {
-    const chainId = selectedNetworks[index].chainId;
-    if (result.status === "fulfilled") {
-      tokens.push(...result.value);
-      return { chainId, status: "success", tokens: result.value };
-    }
+  let failedNetworks = 0;
+  let successfulNetworks = 0;
 
-    return {
-      chainId,
-      status: "failed",
-      tokens: [],
-      error:
-        result.reason instanceof Error
-          ? result.reason.message
-          : "Unknown network error",
-    };
+  results.forEach((result) => {
+    if (result.status === "fulfilled") {
+      successfulNetworks += 1;
+      tokens.push(...result.value);
+    } else {
+      failedNetworks += 1;
+    }
   });
 
-  return { tokens, networks };
+  return { tokens, failedNetworks, successfulNetworks };
+}
+
+export async function getWalletTokenBalances(
+  walletAddress: string,
+  sessionId: string
+): Promise<{
+  mainnet: WalletTokenBalance[];
+  testnet: WalletTokenBalance[];
+  failedNetworks: number;
+  successfulNetworks: number;
+  totalNetworks: number;
+}> {
+  const configuration = await getSessionRpcNetworksByType(sessionId);
+  const totalNetworks =
+    configuration.mainnet.length + configuration.testnet.length;
+
+  if (totalNetworks === 0) {
+    throw new Error("No networks selected");
+  }
+
+  const [mainnetResult, testnetResult] = await Promise.all([
+    getNetworkGroupTokens(walletAddress, configuration.mainnet),
+    getNetworkGroupTokens(walletAddress, configuration.testnet),
+  ]);
+
+  return {
+    mainnet: mainnetResult.tokens,
+    testnet: testnetResult.tokens,
+    failedNetworks:
+      mainnetResult.failedNetworks + testnetResult.failedNetworks,
+    successfulNetworks:
+      mainnetResult.successfulNetworks + testnetResult.successfulNetworks,
+    totalNetworks,
+  };
 }
