@@ -1,47 +1,28 @@
 import { JsonRpcProvider } from "ethers";
 import redis from "../utils/redis";
+import { mapWithConcurrency } from "../utils/concurrency";
+import {
+  AlchemyBalanceResponse,
+  AlchemyTokenBalance,
+  NetworkGroupResult,
+  WalletTokenBalance,
+} from "../types/tokenBalance.types";
+import { getTokenMetadata, formatTokenBalance } from "./tokenMetadata.service";
 import { getSessionRpcNetworksByType } from "./rpc-config.service";
 import { RpcNetworkConfig } from "./rpc.service";
 
 const BALANCE_TTL_SECONDS = 60;
 const MAX_NETWORK_CONCURRENCY = 4;
-
-interface AlchemyTokenBalance {
-  contractAddress: string;
-  tokenBalance: string;
-}
-
-interface AlchemyBalanceResponse {
-  tokenBalances?: AlchemyTokenBalance[];
-  pageKey?: string;
-}
-
-export interface WalletTokenBalance {
-  chainId: number;
-  tokenAddress: string;
-  rawBalance: string;
-}
-
-interface NetworkResult {
-  chainId: number;
-  status: "success" | "failed";
-  tokens: WalletTokenBalance[];
-  error?: string;
-}
-
-interface NetworkGroupResult {
-  tokens: WalletTokenBalance[];
-  failedNetworks: number;
-  successfulNetworks: number;
-}
+const MAX_METADATA_CONCURRENCY = 8;
 
 async function getNetworkTokens(
   walletAddress: string,
   network: RpcNetworkConfig
 ): Promise<WalletTokenBalance[]> {
   const { chainId, rpcUrl } = network;
+  // v2 prevents older cached entries (without metadata) from being reused.
   const cacheKey =
-    `wallet:tokens:${chainId}:${walletAddress.toLowerCase()}`;
+    `wallet:tokens:v2:${chainId}:${walletAddress.toLowerCase()}`;
 
   const cached = await redis.get(cacheKey);
   if (cached) {
@@ -87,48 +68,38 @@ async function getNetworkTokens(
     }
   } while (pageKey);
 
-  const tokens = activeTokens.map((token) => ({
-    chainId,
-    tokenAddress: token.contractAddress,
-    rawBalance: token.tokenBalance,
-  }));
+  const metadataResults = await mapWithConcurrency(
+    activeTokens,
+    MAX_METADATA_CONCURRENCY,
+    (token) => getTokenMetadata(token.contractAddress, provider)
+  );
+
+  const tokens: WalletTokenBalance[] = activeTokens.map((token, index) => {
+    const metadataResult = metadataResults[index];
+    const metadata =
+      metadataResult.status === "fulfilled"
+        ? metadataResult.value
+        : { name: null, symbol: null, decimals: null };
+
+    return {
+      chainId,
+      tokenAddress: token.contractAddress,
+      rawBalance: token.tokenBalance,
+      formattedBalance: formatTokenBalance(
+        token.tokenBalance,
+        metadata.decimals
+      ),
+      name: metadata.name,
+      symbol: metadata.symbol,
+      decimals: metadata.decimals,
+    };
+  });
 
   await redis.set(cacheKey, JSON.stringify(tokens), {
     EX: BALANCE_TTL_SECONDS,
   });
+
   return tokens;
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  callback: (item: T) => Promise<R>
-): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (true) {
-      const index = nextIndex++;
-      if (index >= items.length) return;
-      try {
-        results[index] = {
-          status: "fulfilled",
-          value: await callback(items[index]),
-        };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from(
-      { length: Math.min(limit, items.length) },
-      () => worker()
-    )
-  );
-  return results;
 }
 
 async function getNetworkGroupTokens(
