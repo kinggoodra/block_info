@@ -14,6 +14,16 @@ export interface AlchemyTokenMetadata {
   decimals: number | null;
 }
 
+/**
+ * Redis stores only the raw token balance.
+ */
+export interface CachedTokenBalance {
+  rawBalance: string;
+}
+
+/**
+ * Complete token data returned by the API.
+ */
 export interface WalletTokenBalance {
   chainId: number;
   tokenAddress: string;
@@ -24,6 +34,10 @@ export interface WalletTokenBalance {
   decimals: number | null;
 }
 
+/**
+ * Internal network-fetch statistics.
+ * These are used by the controller and are not sent as API fields.
+ */
 export interface NetworkGroupResult {
   tokens: WalletTokenBalance[];
   failedNetworks: number;
