@@ -1,16 +1,7 @@
 import { Router } from "express";
-import {
-  tokenBalController,
-  tokenBalensController,
-} from "../controllers/wallet.controller";
+import { tokenBalancesController } from "../controllers/wallet.controller";
 
 const router = Router();
-
-// Single-token balance endpoint.
-router.post("/token-bal", tokenBalController);
-
-// Multi-token balance endpoints. Keep both spellings available for compatibility.
-router.post("/token-balens", tokenBalensController);
-router.post("/token-balances", tokenBalensController);
+router.post("/token-balances", tokenBalancesController);
 
 export default router;
