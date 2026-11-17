@@ -1,22 +1,20 @@
 import { JsonRpcProvider } from "ethers";
-import redis from "../utils/redis";
 import { mapWithConcurrency } from "../utils/concurrency";
 import {
   AlchemyBalanceResponse,
   AlchemyTokenBalance,
-  CachedTokenBalance,
   NetworkGroupResult,
   WalletTokenBalance,
 } from "../types/tokenBalance.types";
-import { getTokenMetadata, formatTokenBalance } from "./tokenMetadata.service";
+import {
+  getTokenMetadata,
+  formatTokenBalance,
+} from "./tokenMetadata.service";
 import { getSessionRpcNetworksByType } from "./rpc-config.service";
 import { RpcNetworkConfig } from "./rpc.service";
 
-const BALANCE_TTL_SECONDS = 60;
 const MAX_NETWORK_CONCURRENCY = 4;
-const MAX_METADATA_CONCURRENCY = 8;
-
-type CachedTokenBalances = Record<string, CachedTokenBalance>;
+const MAX_METADATA_CONCURRENCY = 4;
 
 async function buildTokenResponse(
   chainId: number,
@@ -31,6 +29,7 @@ async function buildTokenResponse(
 
   return rawTokens.map((token, index) => {
     const metadataResult = metadataResults[index];
+
     const metadata =
       metadataResult.status === "fulfilled"
         ? metadataResult.value
@@ -57,53 +56,11 @@ async function getNetworkTokens(
 ): Promise<WalletTokenBalance[]> {
   const { chainId, rpcUrl } = network;
 
-  // v4 avoids reusing the previous full-token-object cache format.
-  const cacheKey =
-    `wallet:tokens:v4:${chainId}:${walletAddress.toLowerCase()}`;
-
   const provider = new JsonRpcProvider(rpcUrl, chainId);
   const actualNetwork = await provider.getNetwork();
 
   if (Number(actualNetwork.chainId) !== chainId) {
     throw new Error(`Chain ID mismatch: expected ${chainId}`);
-  }
-
-  const cached = await redis.get(cacheKey);
-
-  if (cached) {
-    try {
-      const cachedBalances = JSON.parse(cached) as CachedTokenBalances;
-
-      if (
-        cachedBalances === null ||
-        typeof cachedBalances !== "object" ||
-        Array.isArray(cachedBalances)
-      ) {
-        throw new Error("Invalid token balance cache structure");
-      }
-
-      const rawTokens = Object.entries(cachedBalances).map(
-        ([tokenAddress, balance]) => {
-          if (
-            !balance ||
-            typeof balance.rawBalance !== "string"
-          ) {
-            throw new Error("Invalid cached token balance");
-          }
-
-          return {
-            tokenAddress,
-            rawBalance: balance.rawBalance,
-          };
-        }
-      );
-
-      // Metadata is fetched on cache hits because Redis stores no decimals.
-      // The backend uses decimals to calculate formattedBalance.
-      return buildTokenResponse(chainId, rawTokens, provider);
-    } catch {
-      await redis.del(cacheKey);
-    }
   }
 
   let pageKey: string | undefined;
@@ -133,6 +90,7 @@ async function getNetworkTokens(
       if (seenPageKeys.has(pageKey)) {
         throw new Error("Repeated Alchemy pagination key");
       }
+
       seenPageKeys.add(pageKey);
     }
   } while (pageKey);
@@ -142,21 +100,6 @@ async function getNetworkTokens(
     rawBalance: token.tokenBalance,
   }));
 
-  // Redis stores only rawBalance. Token address is the object key
-  // used to associate each balance with its token.
-  const cachedBalances: CachedTokenBalances = {};
-
-  for (const token of rawTokens) {
-    cachedBalances[token.tokenAddress] = {
-      rawBalance: token.rawBalance,
-    };
-  }
-
-  await redis.set(cacheKey, JSON.stringify(cachedBalances), {
-    EX: BALANCE_TTL_SECONDS,
-  });
-
-  // formattedBalance and metadata are added only to the API response.
   return buildTokenResponse(chainId, rawTokens, provider);
 }
 
@@ -183,7 +126,11 @@ async function getNetworkGroupTokens(
     }
   });
 
-  return { tokens, failedNetworks, successfulNetworks };
+  return {
+    tokens,
+    failedNetworks,
+    successfulNetworks,
+  };
 }
 
 export async function getWalletTokenBalances(
@@ -197,6 +144,7 @@ export async function getWalletTokenBalances(
   totalNetworks: number;
 }> {
   const configuration = await getSessionRpcNetworksByType(sessionId);
+
   const totalNetworks =
     configuration.mainnet.length + configuration.testnet.length;
 

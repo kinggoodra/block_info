@@ -15,13 +15,6 @@ export interface AlchemyTokenMetadata {
 }
 
 /**
- * Redis stores only the raw token balance.
- */
-export interface CachedTokenBalance {
-  rawBalance: string;
-}
-
-/**
  * Complete token data returned by the API.
  */
 export interface WalletTokenBalance {
