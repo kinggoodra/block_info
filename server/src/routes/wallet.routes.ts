@@ -1,7 +1,12 @@
 import { Router } from "express";
-import { tokenBalancesController } from "../controllers/wallet.controller";
+import {
+  tokenBalController,
+  tokenBalensController,
+} from "../controllers/wallet.controller";
 
 const router = Router();
-router.post("/token-balances", tokenBalancesController);
+
+router.post("/token-bal", tokenBalController);
+router.post("/token-balens", tokenBalensController);
 
 export default router;
