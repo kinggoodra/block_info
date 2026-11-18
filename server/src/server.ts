@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 import express from "express";
-const cors = require("cors");
+import cors from "cors";
 import mainnetRoutes from "./routes/mainnet.routes";
 import testnetRoutes from "./routes/testnet.routes";
 import registerAddressRoutes from "./routes/registerAddress.routes";
