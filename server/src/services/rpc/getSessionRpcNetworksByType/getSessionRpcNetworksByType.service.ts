@@ -1,0 +1,3 @@
+import redis from "../../../utils/redis"; import { RpcNetworkConfig } from "../types/rpc.types"; import { parseRpcConfiguration } from "../parseRpcConfiguration/parseRpcConfiguration.service";
+export interface SessionRpcConfiguration{mainnet:RpcNetworkConfig[];testnet:RpcNetworkConfig[]}
+export async function getSessionRpcNetworksByType(sessionId:string):Promise<SessionRpcConfiguration>{if(!redis.isReady)throw new Error("Redis is not ready");const [mainnetValue,testnetValue]=await Promise.all([redis.get(`rpc:${sessionId}:mainnet`),redis.get(`rpc:${sessionId}:testnet`)]);return{mainnet:parseRpcConfiguration(mainnetValue,"mainnet"),testnet:parseRpcConfiguration(testnetValue,"testnet")}}
