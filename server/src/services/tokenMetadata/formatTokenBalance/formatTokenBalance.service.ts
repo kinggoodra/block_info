@@ -1,0 +1,2 @@
+import { formatUnits } from "ethers";
+export function formatTokenBalance(rawBalance:string,decimals:number|null):string|null{if(decimals===null)return null;try{return formatUnits(rawBalance,decimals)}catch{return null}}
