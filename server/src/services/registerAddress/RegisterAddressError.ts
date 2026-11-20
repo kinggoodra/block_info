@@ -1,0 +1,3 @@
+export class RegisterAddressError extends Error {
+  constructor(message: string) { super(message); this.name = "RegisterAddressError"; }
+}
