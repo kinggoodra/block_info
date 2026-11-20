@@ -1,0 +1,2 @@
+import { getSessionRpcNetworksByType } from "../getSessionRpcNetworksByType/getSessionRpcNetworksByType.service"; import { RpcNetworkConfig } from "../types/rpc.types";
+export async function getSessionRpcNetworks(sessionId:string):Promise<RpcNetworkConfig[]>{const configuration=await getSessionRpcNetworksByType(sessionId);return[...configuration.mainnet,...configuration.testnet]}
