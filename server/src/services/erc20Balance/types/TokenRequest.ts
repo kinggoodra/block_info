@@ -1,0 +1,1 @@
+export interface TokenRequest { chainId: number; tokenContractAddress: string; }
